@@ -1,0 +1,28 @@
+general:
+  data_base_dir: /app/data
+  version: 1.0
+  description: "Default configuration for Rhabdomyosarcoma pathology segmentation (dicom in, dicom out)"
+
+execute:
+- DicomImporter
+- Patho_RMS_Runner
+- DsegConverter
+- DataOrganizer
+
+modules:
+  DicomImporter:
+    source_dir: input_data
+    import_dir: sorted_data
+    sort_data: True
+    meta: 
+      mod: '%Modality'
+
+  DsegConverter:
+    model_name: patho-rms
+    body_part_examined: TISSUE
+    source_segs: dicom:mod=seg
+    skip_empty_slices: False
+  
+  DataOrganizer:
+    targets:
+    - dicomseg:mod=seg-->[i:sid]/patho-rms.seg.dcm
