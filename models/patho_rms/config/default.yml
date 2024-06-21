@@ -15,7 +15,7 @@ modules:
     import_dir: sorted_data
     sort_data: True
     meta: 
-      mod: '%Modality'
+      mod: 'sm'
 
   DsegConverter:
     model_name: patho-rms

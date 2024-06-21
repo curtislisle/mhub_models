@@ -49,7 +49,13 @@ import segmentation_models_pytorch as smp
 #------ Start Global definitiona ---------------------
 
 # define global variable that is set according to whether GPUs are discovered
-USE_GPU = True
+if torch.cuda.is_available():
+    USE_GPU = True
+    print('GPU is available')
+else:
+    USE_GPU = False
+    print('GPU is not available')
+
 
 ml = nn.Softmax(dim=1)
 
@@ -137,7 +143,7 @@ class Patho_RMS_Runner(ModelRunner):
 
     # Question:  I don't understand how the channels are specified in the 'roi' argument
     @IO.Instance()
-    @IO.Input('image', 'dicom:mod=path',  the='input whole slide image')
+    @IO.Input('image', 'dicom:mod=sm',  the='input whole slide image')
     @IO.Output('structures', 'pathology_rms.seg.dcm', 'dicom:mod=seg:model=patho_rms', bundle='model', the='predicted tissue classes')
     def task(self, instance: Instance, image: InstanceData, structures: InstanceData) -> None:
         # Question: is this just a logging output?
@@ -146,31 +152,39 @@ class Patho_RMS_Runner(ModelRunner):
         # *** hardcode the model weights location until figuring out
         # the initialization method
         print('Need to pull weights from public repository!')
-        modelCheckpointFilePath = '/home/clisle/proj/slicer/PW39/rms-infer-code-standalone/'
+        #modelCheckpointFilePath = '/home/clisle/proj/slicer/PW39/rms-infer-code-standalone/'
+        modelCheckpointFilePath = '/root/.cache/torch/hub/checkpoints/'
 
+        # the input image passed is the containing directory, not a file, so look up a file
+        inputImagePath = self.findDicomWsiFile(image.abspath)
+        self.v(f'discovered input file is {inputImagePath}')
+        self.v(f'output path is {structures.abspath}')
         # run model. Should this be in a subprocess?
-        outfile = self.infer_rhabdo(modelCheckpointFilePath,image.abspath,structures.abspath)
+        outfile = self.infer_rhabdo(modelCheckpointFilePath,inputImagePath,structures.abspath)
+       
+
+    # look in the directory for a dicom file
+    def findDicomWsiFile(self, dirPath):
+        file_list = []
+        for root, dirs, files in os.walk(dirPath):
+            for file in files:
+                file_list.append(os.path.join(root, file))
+        # *** this is a hack, need to find the right file
+        return file_list[0]
 
 
     def infer_rhabdo(self,modelCheckpointFilePath,image_file,out_file,**kwargs):
         print(" input image filename = {}".format(image_file))
         # setup the GPU environment for pytorch
-        os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-        DEVICE = 'cuda'
+        if USE_GPU:
+            os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+            DEVICE = 'cuda'
+        else:
+            DEVICE = 'cpu'
 
         print('perform forward inferencing')
         predict_image = start_inference_mainthread(modelCheckpointFilePath,image_file,out_file)
         print('inferencing complete')
-
-        # generate unique names for multiple runs.  Add extension so it is easier to use. Put output
-        # in the same directory as the output dicom file
-        #out_dir = os.path.dirname(out_file)
-        #outname_color = os.path.join(out_dir,image_file.split('.')[0]+'_predict.png')
-
-        # write the output object using openCV  
-        print('writing segmentation output')
-        cv2.imwrite(out_file,predict_image)
-        print('writing output completed')
 
         # return the name of the output file
         return out_file
@@ -478,8 +492,10 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
         position = 0
         stopcounter = 0
 
-        for i in range(heights-1):
-            for j in range(widths-1):
+        for i in range(3):
+            for j in range(3):
+        #for i in range(heights-1):
+            #for j in range(widths-1):
                 #test_patch = org_slide_ext[i * SLIDE_OFFSET: i * SLIDE_OFFSET + IMAGE_SIZE,
                 #             j * SLIDE_OFFSET: j * SLIDE_OFFSET + IMAGE_SIZE, 0:3]
 
@@ -596,7 +612,7 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
     fileNoExtension = os.path.basename(image_path).split('.')[0]
     dirName = os.path.dirname(image_path)
     numpyFileName = os.path.join(dirName,fileNoExtension+'_prob_map_seg_stack.npy')
-    np.save(numpyFileName, prob_map_seg_stack)
+    #np.save(numpyFileName, prob_map_seg_stack)
     print('prob_map_seg_stack:',prob_map_seg_stack.shape)
     pred_map_final = np.argmax(prob_map_seg_stack, axis=-1)
     print('pred_map_final:',pred_map_final.shape)
@@ -682,7 +698,7 @@ def load_best_model(model, path_to_model, best_prec1=0.0):
         print("=> no checkpoint found at '{}'".format(path_to_model))
 
 
-def inference_image(modelWeightFile,model, image_path, BATCH_SIZE, num_classes):
+def inference_image(model, image_path, BATCH_SIZE, num_classes):
     kernel = _gaussian_2d(num_classes, 0.5, 0.0)
     predict_image = _inference(model, image_path, BATCH_SIZE, num_classes, kernel, 1)
     return predict_image
@@ -695,7 +711,8 @@ def start_inference(modelWeightFile,msg_queue, image_file):
     torch.backends.cudnn.benchmark = True
 
     #saved_weights_list = sorted(glob.glob(WEIGHT_PATH + '*.tar'))
-    saved_weights_list = [os.path.join(modelWeightFile,'model_iou_0.4996_0.5897_epoch_45.pth.tar')] 
+    #saved_weights_list = [os.path.join(modelWeightFile,'model_iou_0.4996_0.5897_epoch_45.pth.tar')] 
+    saved_weights_list = [os.path.join(modelWeightFile,'rms_segment_fold_03.pth')] 
     print(saved_weights_list)
 
     # create segmentation model with pretrained encoder
@@ -730,7 +747,8 @@ def start_inference_mainthread(modelWeightPath,image_file,out_file):
     torch.backends.cudnn.benchmark = True
 
     #saved_weights_list = sorted(glob.glob(WEIGHT_PATH + '*.tar'))
-    saved_weights_list = [os.path.join(modelWeightPath,'model_iou_0.7343_0.7175_epoch_60.pth.tar')] 
+    #saved_weights_list = [os.path.join(modelWeightPath,'model_iou_0.7343_0.7175_epoch_60.pth.tar')] 
+    saved_weights_list = [os.path.join(modelWeightPath,'rms_segment_fold_03.pth')]
     print(saved_weights_list)
 
     # create segmentation model with pretrained encoder
@@ -817,10 +835,13 @@ def writeDicomSegObject(image_path, seg_image, out_path):
 
     # Path to multi-frame SM image instance stored as PS3.10 file
     image_file = Path(image_path)
+    print(f'writeDCM: image_path {image_path}')
 
     # Read SM Image data set from PS3.10 files on disk.  This will provide the 
     # reference image size and other dicom header information
     image_dataset = dcmread(str(image_file))
+    print(f'writeDCM: image_file {image_file}')
+    print(f'writeDCM: image_dataset {image_dataset}')
 
     # function stolen from idc-pan-cancer-archive repository to re-tile the numpy to match the tiling
     # from the source image
@@ -831,7 +852,7 @@ def writeDicomSegObject(image_path, seg_image, out_path):
     
     # Describe the algorithm that created the segmentation
     algorithm_identification = hd.AlgorithmIdentificationSequence(
-        name='FNLCR_RMS_seg_iou_0.7343_epoch_60',
+        name='FNLCR_RMS_seg_iou_0.7343_epoch_60_fold_03',
         version='v1.0',
         family=codes.cid7162.ArtificialIntelligence
     )
@@ -908,11 +929,3 @@ def writeDicomSegObject(image_path, seg_image, out_path):
     outfileanme = out_path
     seg_dataset.save_as(outfileanme)
 
-
-# a low-res version of one of David's converted outpuots
-imagePath = '/media/clisle/Imaging/IDC/pmed_low_res2/DCM_3'
-outPath = '/media/clisle/Imaging/IDC/pmed_low_res2'
-
-# a low-res version of one of David's converted outpuots
-imagePath = '/media/clisle/KVisImagery/NCI/IDC/Oct2023_RMS_SamplesToIDC/PALMPL-0BMX5D-AKA-RMS2397/image/PALMPL-0BMX5D_1_DCM_3'
-outPath = '/media/clisle/KVisImagery/NCI/IDC/Oct2023_RMS_SamplesToIDC/PALMPL-0BMX5D-AKA-RMS2397/model_prediction'
