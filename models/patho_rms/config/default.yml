@@ -17,6 +17,10 @@ modules:
     meta: 
       mod: 'sm'
 
+  Patho_RMS_Runner:
+    meta: 
+      mod: 'sm'
+
   DsegConverter:
     model_name: patho_rms
     body_part_examined: TISSUE

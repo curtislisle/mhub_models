@@ -492,10 +492,10 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
         position = 0
         stopcounter = 0
 
-        for i in range(3):
-            for j in range(3):
-        #for i in range(heights-1):
-            #for j in range(widths-1):
+        #for i in range(3):
+            #for j in range(3):
+        for i in range(heights-1):
+            for j in range(widths-1):
                 #test_patch = org_slide_ext[i * SLIDE_OFFSET: i * SLIDE_OFFSET + IMAGE_SIZE,
                 #             j * SLIDE_OFFSET: j * SLIDE_OFFSET + IMAGE_SIZE, 0:3]
 
