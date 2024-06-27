@@ -142,18 +142,18 @@ CHANNEL_DESCRIPTION['chan_4_prob'] = 'ERMS_prob'
 
 
 #@IO.Config('batchsize', int, 64, the='Number of slices to be processed simultaneously. A smaller batch size requires less memory but may be slower.')
+@IO.Config('fractional', bool, False, the='output a fractional segmentation mask indicating probability of class membership. Default is Binary Segmentation')
 class Patho_RMS_Runner(ModelRunner):
-    
+    fractional : bool
     #batchsize: int
 
     # Question:  I don't understand how the channels are specified in the 'roi' argument
     @IO.Instance()
     @IO.Input('image', 'dicom:mod=sm',  the='input whole slide image')
-    #@IO.Config('fractional', 'boolean', False, the='output a fractional segmentation mask. Default is Binary Segmentation')
     @IO.Output('structures', 'pathology_rms.seg.dcm', 'dicomseg:mod=seg:model=patho_rms', bundle='model', the='predicted tissue classes')
     def task(self, instance: Instance, image: InstanceData, structures: InstanceData) -> None:
-        # Question: is this just a logging output?
         self.log.debug("Running the segmentation.")
+        print('fractional segmentation mode is' + 'enabled' if self.fractional else 'disabled')
 
         # *** hardcode the model weights location until figuring out
         # the initialization method
@@ -166,7 +166,7 @@ class Patho_RMS_Runner(ModelRunner):
         self.log.debug(f'discovered input file is {inputImagePath}')
         self.log.debug(f'output path is {structures.abspath}')
         # run model. Should this be in a subprocess?
-        outfile = self.infer_rhabdo(modelCheckpointFilePath,inputImagePath,structures.abspath)
+        outfile = self.infer_rhabdo(modelCheckpointFilePath,inputImagePath,structures.abspath,self.fractional)
        
 
     # look in the directory for a dicom file
@@ -179,7 +179,7 @@ class Patho_RMS_Runner(ModelRunner):
         return file_list[0]
 
 
-    def infer_rhabdo(self,modelCheckpointFilePath,image_file,out_file,**kwargs):
+    def infer_rhabdo(self,modelCheckpointFilePath,image_file,out_file,fractional,**kwargs):
         self.log.debug(" input image filename = {}".format(image_file))
         # setup the GPU environment for pytorch
         if USE_GPU:
@@ -189,7 +189,7 @@ class Patho_RMS_Runner(ModelRunner):
             DEVICE = 'cpu'
 
         self.log.debug('perform forward inferencing')
-        predict_image = start_inference_mainthread(modelCheckpointFilePath,image_file,out_file)
+        start_inference_mainthread(modelCheckpointFilePath,image_file,out_file,fractional)
         self.log.debug('inferencing complete')
 
         # return the name of the output file
@@ -710,44 +710,8 @@ def inference_image(model, image_path, BATCH_SIZE, num_classes):
     prob_image,predict_image = _inference(model, image_path, BATCH_SIZE, num_classes, kernel, 1)
     return prob_image,predict_image
 
-# -- delete? ----
-def start_inference(modelWeightFile,msg_queue, image_file):
-    reset_seed(1)
 
-    best_prec1_valid = 0.
-    torch.backends.cudnn.benchmark = True
-
-    #saved_weights_list = sorted(glob.glob(WEIGHT_PATH + '*.tar'))
-    #saved_weights_list = [os.path.join(modelWeightFile,'model_iou_0.4996_0.5897_epoch_45.pth.tar')] 
-    saved_weights_list = [os.path.join(modelWeightFile,'rms_segment_fold_03.pth')] 
-    print(saved_weights_list)
-
-    # create segmentation model with pretrained encoder
-    model = smp.Unet(
-        encoder_name=ENCODER,
-        encoder_weights=ENCODER_WEIGHTS,
-        classes=len(CLASS_VALUES),
-        activation=ACTIVATION,
-        aux_params=None,
-    )
-
-    model = nn.DataParallel(model)
-    if USE_GPU:
-        model = model.cuda()
-    print('load pretrained weights')
-    model = load_best_model(model, saved_weights_list[-1], best_prec1_valid)
-    print('Loading model is finished!!!!!!!')
-
-    # return image data so girder toplevel task can write it out
-    prob_image,predict_image = inference_image(model,image_file, BATCH_SIZE, len(CLASS_VALUES))
-
-    # put the filename of the image in the message queue and return it to the main process
-    msg_queue.put(predict_image)
-    
-    # not needed anymore, returning value through message queue
-    #return predict_image
-
-def start_inference_mainthread(modelWeightPath,image_file,out_file):
+def start_inference_mainthread(modelWeightPath,image_file,out_file,fractional):
     reset_seed(1)
 
     best_prec1_valid = 0.
@@ -778,11 +742,11 @@ def start_inference_mainthread(modelWeightPath,image_file,out_file):
     prob_image,predict_image = inference_image(model,image_file, BATCH_SIZE, len(CLASS_VALUES))
     # pass the original dicom file, so header information can be read.  
     # Pass the multichannel segmentation image. 
-    #writeDicomSegObject(image_file,predict_image,out_file)
-    writeDicomFractionalSegObject(image_file,prob_image,out_file)
-    # not needed anymore?
-    return predict_image
-
+    if fractional:
+        writeDicomFractionalSegObject(image_file,prob_image,out_file)
+    else:
+        writeDicomSegObject(image_file,predict_image,out_file)
+    
 
 
 #---------------- DICOM export --------
@@ -849,15 +813,30 @@ def writeDicomSegObject(image_path, seg_image, out_path):
     # reference image size and other dicom header information
     image_dataset = dcmread(str(image_file))
     print(f'writeDCM: image_file {image_file}')
-    print(f'writeDCM: image_dataset {image_dataset}')
+    #print(f'writeDCM: image_dataset {image_dataset}')
+
+    # convert from a labelmap format to a binary image for each separate channel
+    seg1_mask = seg_image[:,:] == 1
+    seg2_mask = seg_image[:,:] == 2
+    seg3_mask = seg_image[:,:] == 3
+    seg4_mask = seg_image[:,:] == 4
+
+    #print(seg1_mask[1100:1105,1100:1105])
+    #print(seg1_mask[1200:1205,1200:1205])
+    #print(seg1_mask[1300:1305,1300:1305])
 
     # function stolen from idc-pan-cancer-archive repository to re-tile the numpy to match the tiling
     # from the source image
-    print('passing in a numpy array of shape:',seg_image.shape)
-    mask = disassemble_total_pixel_matrix(seg_image,image_dataset)
+    
+    #print('passing in a numpy array of shape:',seg_image.shape)
+    #mask = disassemble_total_pixel_matrix(seg_image,image_dataset)
+    #print('received a numpy array of shape:',mask.shape)
+    
+    print('passing in a numpy array of shape:',seg1_mask.shape)
+    mask = disassemble_total_pixel_matrix(seg1_mask,image_dataset)
     print('received a numpy array of shape:',mask.shape)
 
-    
+
     # Describe the algorithm that created the segmentation
     algorithm_identification = hd.AlgorithmIdentificationSequence(
         name='FNLCR_RMS_seg_iou_0.7343_epoch_60_fold_03',
@@ -921,8 +900,8 @@ def writeDicomSegObject(image_path, seg_image, out_path):
         omit_empty_frames=False,
         segmentation_type=hd.seg.SegmentationTypeValues.BINARY,
         dimension_organization_type='TILED_FULL',
-        #segmentation_type=hd.seg.SegmentationTypeValues.FRACTIONAL,
-        segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
+        #segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
+        segment_descriptions=[description_segment_1],
         series_instance_uid=hd.UID(),
         series_number=2,
         sop_instance_uid=hd.UID(),
@@ -973,7 +952,7 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
 
     # Describe the segment
     description_segment_1 = hd.seg.SegmentDescription(
-        segment_number=1,
+        segment_number=3,
         segment_label=CHANNEL_DESCRIPTION['chan_1_prob'],
         segmented_property_category=codes.cid7150.Tissue,
         segmented_property_type=codes.cid7166.ConnectiveTissue,
@@ -997,7 +976,7 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
  
      # Describe the segment
     description_segment_3 = hd.seg.SegmentDescription(
-        segment_number=3,
+        segment_number=1,
         segment_label=CHANNEL_DESCRIPTION['chan_3_prob'],
         segmented_property_category=codes.cid7150.Tissue,
         segmented_property_type=codes.cid7166.ConnectiveTissue,
