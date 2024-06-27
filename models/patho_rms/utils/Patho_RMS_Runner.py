@@ -54,7 +54,7 @@ if torch.cuda.is_available():
     print('GPU is available')
 else:
     USE_GPU = False
-    print('GPU is not available')
+    print('GPU is not available. Using CPU')
 
 
 ml = nn.Softmax(dim=1)
@@ -128,6 +128,11 @@ CHANNEL_DESCRIPTION['chan_1'] = 'Necrosis'
 CHANNEL_DESCRIPTION['chan_2'] = 'Stroma'
 CHANNEL_DESCRIPTION['chan_3'] = 'ARMS'
 CHANNEL_DESCRIPTION['chan_4'] = 'ERMS'
+CHANNEL_DESCRIPTION['chan_1_prob'] = 'Necrosis_prob'
+CHANNEL_DESCRIPTION['chan_2_prob'] = 'Stroma_prob'
+CHANNEL_DESCRIPTION['chan_3_prob'] = 'ARMS_prob'
+CHANNEL_DESCRIPTION['chan_4_prob'] = 'ERMS_prob'
+
 
 #------ End Global definitiona ---------------------
 
@@ -144,21 +149,22 @@ class Patho_RMS_Runner(ModelRunner):
     # Question:  I don't understand how the channels are specified in the 'roi' argument
     @IO.Instance()
     @IO.Input('image', 'dicom:mod=sm',  the='input whole slide image')
-    @IO.Output('structures', 'pathology_rms.seg.dcm', 'dicom:mod=seg:model=patho_rms', bundle='model', the='predicted tissue classes')
+    #@IO.Config('fractional', 'boolean', False, the='output a fractional segmentation mask. Default is Binary Segmentation')
+    @IO.Output('structures', 'pathology_rms.seg.dcm', 'dicomseg:mod=seg:model=patho_rms', bundle='model', the='predicted tissue classes')
     def task(self, instance: Instance, image: InstanceData, structures: InstanceData) -> None:
         # Question: is this just a logging output?
-        self.v("Running the segmentation.")
+        self.log.debug("Running the segmentation.")
 
         # *** hardcode the model weights location until figuring out
         # the initialization method
-        print('Need to pull weights from public repository!')
+        self.log.debug('Need to pull weights from public repository!')
         #modelCheckpointFilePath = '/home/clisle/proj/slicer/PW39/rms-infer-code-standalone/'
         modelCheckpointFilePath = '/root/.cache/torch/hub/checkpoints/'
 
         # the input image passed is the containing directory, not a file, so look up a file
         inputImagePath = self.findDicomWsiFile(image.abspath)
-        self.v(f'discovered input file is {inputImagePath}')
-        self.v(f'output path is {structures.abspath}')
+        self.log.debug(f'discovered input file is {inputImagePath}')
+        self.log.debug(f'output path is {structures.abspath}')
         # run model. Should this be in a subprocess?
         outfile = self.infer_rhabdo(modelCheckpointFilePath,inputImagePath,structures.abspath)
        
@@ -174,7 +180,7 @@ class Patho_RMS_Runner(ModelRunner):
 
 
     def infer_rhabdo(self,modelCheckpointFilePath,image_file,out_file,**kwargs):
-        print(" input image filename = {}".format(image_file))
+        self.log.debug(" input image filename = {}".format(image_file))
         # setup the GPU environment for pytorch
         if USE_GPU:
             os.environ['CUDA_VISIBLE_DEVICES'] = '0'
@@ -182,9 +188,9 @@ class Patho_RMS_Runner(ModelRunner):
         else:
             DEVICE = 'cpu'
 
-        print('perform forward inferencing')
+        self.log.debug('perform forward inferencing')
         predict_image = start_inference_mainthread(modelCheckpointFilePath,image_file,out_file)
-        print('inferencing complete')
+        self.log.debug('inferencing complete')
 
         # return the name of the output file
         return out_file
@@ -636,7 +642,8 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
     del pred_map_final_stack
     gc.collect()
 
-    #np.save('pred_map_final_stack.npy', pred_map_final_stack)
+    out_prob = prob_map_seg_stack
+    np.save('/app/data/output_data/prob_out.npy', out_prob)
     #prob_colormap = _gray_to_color(prob_map_seg_stack)
     #np.save('prob_colormap.npy', prob_colormap)
 
@@ -645,9 +652,9 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
     #out_color = (pred_colormap*255).astype('uint8')
 
     #numpyFileName = os.path.join(dirName,fileNoExtension+'_out_color.npy')
-    #np.save(numpyFileName, out_color)
+    np.save('/app/data/output_data/pred_out_label.npy', out_label)
     # return image instead of saving directly
-    return out_label
+    return out_prob, out_label
 
 
 
@@ -700,8 +707,8 @@ def load_best_model(model, path_to_model, best_prec1=0.0):
 
 def inference_image(model, image_path, BATCH_SIZE, num_classes):
     kernel = _gaussian_2d(num_classes, 0.5, 0.0)
-    predict_image = _inference(model, image_path, BATCH_SIZE, num_classes, kernel, 1)
-    return predict_image
+    prob_image,predict_image = _inference(model, image_path, BATCH_SIZE, num_classes, kernel, 1)
+    return prob_image,predict_image
 
 # -- delete? ----
 def start_inference(modelWeightFile,msg_queue, image_file):
@@ -732,7 +739,7 @@ def start_inference(modelWeightFile,msg_queue, image_file):
     print('Loading model is finished!!!!!!!')
 
     # return image data so girder toplevel task can write it out
-    predict_image = inference_image(model,image_file, BATCH_SIZE, len(CLASS_VALUES))
+    prob_image,predict_image = inference_image(model,image_file, BATCH_SIZE, len(CLASS_VALUES))
 
     # put the filename of the image in the message queue and return it to the main process
     msg_queue.put(predict_image)
@@ -768,10 +775,11 @@ def start_inference_mainthread(modelWeightPath,image_file,out_file):
     print('Loading model is finished!!!!!!!')
 
     # return image data so toplevel task can write it out
-    predict_image = inference_image(model,image_file, BATCH_SIZE, len(CLASS_VALUES))
+    prob_image,predict_image = inference_image(model,image_file, BATCH_SIZE, len(CLASS_VALUES))
     # pass the original dicom file, so header information can be read.  
     # Pass the multichannel segmentation image. 
-    writeDicomSegObject(image_file,predict_image,out_file)
+    #writeDicomSegObject(image_file,predict_image,out_file)
+    writeDicomFractionalSegObject(image_file,prob_image,out_file)
     # not needed anymore?
     return predict_image
 
@@ -857,18 +865,18 @@ def writeDicomSegObject(image_path, seg_image, out_path):
         family=codes.cid7162.ArtificialIntelligence
     )
 
-    # Describe the segment
+    # Describe the segment Necreosis
     description_segment_1 = hd.seg.SegmentDescription(
         segment_number=1,
         segment_label=CHANNEL_DESCRIPTION['chan_1'],
-        segmented_property_category=codes.cid7150.Tissue,
-        segmented_property_type=codes.cid7166.ConnectiveTissue,
+        segmented_property_category=codes.SCT.MorphologicallyAbnormalStructure,
+        segmented_property_type=codes.SCT.Necrosis,
         algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
         algorithm_identification=algorithm_identification,
         tracking_uid=hd.UID(),
         tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_1'])
     )
- # Describe the segment
+ # Describe the segment STROMA
     description_segment_2 = hd.seg.SegmentDescription(
         segment_number=2,
         segment_label=CHANNEL_DESCRIPTION['chan_2'],
@@ -880,11 +888,12 @@ def writeDicomSegObject(image_path, seg_image, out_path):
         tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_2'])
     )
 
-    # Describe the segment
+    # Describe the segment ARMS
     description_segment_3 = hd.seg.SegmentDescription(
         segment_number=3,
         segment_label=CHANNEL_DESCRIPTION['chan_3'],
         segmented_property_category=codes.cid7150.Tissue,
+        #segmented_property_type='63449009',
         segmented_property_type=codes.cid7166.ConnectiveTissue,
         algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
         algorithm_identification=algorithm_identification,
@@ -892,11 +901,12 @@ def writeDicomSegObject(image_path, seg_image, out_path):
         tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_3'])
     )
 
-    # Describe the segment
+    # Describe the segment ERMS
     description_segment_4 = hd.seg.SegmentDescription(
         segment_number=4,
         segment_label=CHANNEL_DESCRIPTION['chan_4'],
         segmented_property_category=codes.cid7150.Tissue,
+        #segmented_property_type='14269005',
         segmented_property_type=codes.cid7166.ConnectiveTissue,
         algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
         algorithm_identification=algorithm_identification,
@@ -908,7 +918,9 @@ def writeDicomSegObject(image_path, seg_image, out_path):
     seg_dataset = hd.seg.Segmentation(
         source_images=[image_dataset],
         pixel_array=mask,
+        omit_empty_frames=False,
         segmentation_type=hd.seg.SegmentationTypeValues.BINARY,
+        dimension_organization_type='TILED_FULL',
         #segmentation_type=hd.seg.SegmentationTypeValues.FRACTIONAL,
         segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
         series_instance_uid=hd.UID(),
@@ -918,9 +930,116 @@ def writeDicomSegObject(image_path, seg_image, out_path):
         # the following two entries are added because the output resolution is different from the source
         #pixel_measures=derived_pixel_measures,
         #plane_positions= derived_plane_positions,
-        manufacturer='Aperio',
-        manufacturer_model_name='Unknown',
-        software_versions='v1',
+        manufacturer='NCI/FNLCR',
+        manufacturer_model_name='FNLCR_IVG_RMS_iou_0.7343_0.7175_epoch_60',
+        software_versions='binary_seg_mhub_v1',
+        device_serial_number='Unknown'
+    )
+
+    #print(seg_dataset)
+    # change output file with some function is needed
+    outfileanme = out_path
+    seg_dataset.save_as(outfileanme)
+
+
+
+def writeDicomFractionalSegObject(image_path, seg_image, out_path):
+
+    # Path to multi-frame SM image instance stored as PS3.10 file
+    image_file = Path(image_path)
+
+    # Read SM Image data set from PS3.10 files on disk.  This will provide the 
+    # reference image size and other dicom header information
+    image_dataset = dcmread(str(image_file))
+
+    # function stolen from idc-pan-cancer-archive repository to re-tile the numpy to match the tiling
+    # from the source image.  It only works for a 3D array, so we have to pick one of the channels. 
+    # picking channel 3 for now (ARMS)
+    print('passing in a numpy array of shape:',seg_image.shape)
+    mask = disassemble_total_pixel_matrix(seg_image[:,:,3],image_dataset)
+    print('disassembled dimensions:',mask.shape)
+    mask_rolled = np.moveaxis(mask, -1, 0)
+    print('rolled dimensions:',mask_rolled.shape)
+
+    # make the derived image header information
+    #derived_plane_positions,derived_pixel_measures = _compute_derived_image_attributes(image_dataset, mask)
+
+    # Describe the algorithm that created the segmentation
+    algorithm_identification = hd.AlgorithmIdentificationSequence(
+        name='FNLCR_RMS_probability_iou_0.7343_epoch_60',
+        version='v1.0',
+        family=codes.cid7162.ArtificialIntelligence
+    )
+
+    # Describe the segment
+    description_segment_1 = hd.seg.SegmentDescription(
+        segment_number=1,
+        segment_label=CHANNEL_DESCRIPTION['chan_1_prob'],
+        segmented_property_category=codes.cid7150.Tissue,
+        segmented_property_type=codes.cid7166.ConnectiveTissue,
+        algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
+        algorithm_identification=algorithm_identification,
+        tracking_uid=hd.UID(),
+        tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_1_prob'])
+    )
+ 
+    # Describe the segment
+    description_segment_2 = hd.seg.SegmentDescription(
+        segment_number=2,
+        segment_label=CHANNEL_DESCRIPTION['chan_2_prob'],
+        segmented_property_category=codes.cid7150.Tissue,
+        segmented_property_type=codes.cid7166.ConnectiveTissue,
+        algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
+        algorithm_identification=algorithm_identification,
+        tracking_uid=hd.UID(),
+        tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_2_prob'])
+    )
+ 
+     # Describe the segment
+    description_segment_3 = hd.seg.SegmentDescription(
+        segment_number=3,
+        segment_label=CHANNEL_DESCRIPTION['chan_3_prob'],
+        segmented_property_category=codes.cid7150.Tissue,
+        segmented_property_type=codes.cid7166.ConnectiveTissue,
+        algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
+        algorithm_identification=algorithm_identification,
+        tracking_uid=hd.UID(),
+        tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_3_prob'])
+    )
+ 
+     # Describe the segment
+    description_segment_4 = hd.seg.SegmentDescription(
+        segment_number=4,
+        segment_label=CHANNEL_DESCRIPTION['chan_4_prob'],
+        segmented_property_category=codes.cid7150.Tissue,
+        segmented_property_type=codes.cid7166.ConnectiveTissue,
+        algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
+        algorithm_identification=algorithm_identification,
+        tracking_uid=hd.UID(),
+        tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_4_prob'])
+    )
+ 
+    # Create the Segmentation instance
+    seg_dataset = hd.seg.Segmentation(
+        source_images=[image_dataset],
+        pixel_array=mask,
+ 
+        #segmentation_type=hd.seg.SegmentationTypeValues.BINARY,
+        segmentation_type=hd.seg.SegmentationTypeValues.FRACTIONAL,
+        dimension_organization_type= 'TILED_FULL',
+        omit_empty_frames=False,
+        segment_descriptions=[description_segment_3],
+        #segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
+        series_instance_uid=hd.UID(),
+        series_number=3,
+        sop_instance_uid=hd.UID(),
+        instance_number=1,
+        # the following two entries are added because the output resolution is different from the source
+        #pixel_measures=derived_pixel_measures,
+        #plane_positions= derived_plane_positions,
+        manufacturer='NCI/FNLCR',
+        manufacturer_model_name='FNLCR_IVG_RMS_iou_0.7343_0.7175_epoch_60',
+        software_versions='fractional_seg_mhub_v1',
         device_serial_number='Unknown'
     )
 

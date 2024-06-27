@@ -17,15 +17,19 @@ modules:
     meta: 
       mod: 'sm'
 
+  # run the model.  If fractional=True, output is Fractional Segmentation Object, 
+  # otherwise it is multiclass Binary Segmentation Object. Operates on 'Slide Microscopy' image types
   Patho_RMS_Runner:
+    #fractional: False
     meta: 
       mod: 'sm'
 
-  DsegConverter:
-    model_name: patho_rms
-    body_part_examined: TISSUE
-    source_segs: dicom:mod=seg
-    skip_empty_slices: False
+
+  #DsegConverter:
+  #  model_name: patho_rms
+  #  body_part_examined: TISSUE
+  #  source_segs: dicom:mod=seg
+  #  skip_empty_slices: False
   
   DataOrganizer:
     targets:
