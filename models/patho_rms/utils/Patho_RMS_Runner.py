@@ -935,10 +935,16 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
     # from the source image.  It only works for a 3D array, so we have to pick one of the channels. 
     # picking channel 3 for now (ARMS)
     print('passing in a numpy array of shape:',seg_image.shape)
-    mask = disassemble_total_pixel_matrix(seg_image[:,:,3],image_dataset)
-    print('disassembled dimensions:',mask.shape)
-    mask_rolled = np.moveaxis(mask, -1, 0)
-    print('rolled dimensions:',mask_rolled.shape)
+    mask_1 = disassemble_total_pixel_matrix(seg_image[:,:,1],image_dataset)
+    mask_2 = disassemble_total_pixel_matrix(seg_image[:,:,2],image_dataset)
+    mask_3 = disassemble_total_pixel_matrix(seg_image[:,:,3],image_dataset)
+    mask_4 = disassemble_total_pixel_matrix(seg_image[:,:,4],image_dataset)
+    print('disassembled dimensions:',mask_1.shape)
+    mask = np.zeros((mask_1.shape[0],mask_1.shape[1], mask_1.shape[2], 4), np.float32)
+    mask[:,:,:,0] = mask_1
+    mask[:,:,:,1] = mask_2
+    mask[:,:,:,2] = mask_3
+    mask[:,:,:,3] = mask_4
 
     # make the derived image header information
     #derived_plane_positions,derived_pixel_measures = _compute_derived_image_attributes(image_dataset, mask)
@@ -952,7 +958,7 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
 
     # Describe the segment
     description_segment_1 = hd.seg.SegmentDescription(
-        segment_number=3,
+        segment_number=1,
         segment_label=CHANNEL_DESCRIPTION['chan_1_prob'],
         segmented_property_category=codes.cid7150.Tissue,
         segmented_property_type=codes.cid7166.ConnectiveTissue,
@@ -976,7 +982,7 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
  
      # Describe the segment
     description_segment_3 = hd.seg.SegmentDescription(
-        segment_number=1,
+        segment_number=3,
         segment_label=CHANNEL_DESCRIPTION['chan_3_prob'],
         segmented_property_category=codes.cid7150.Tissue,
         segmented_property_type=codes.cid7166.ConnectiveTissue,
@@ -1007,8 +1013,8 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
         segmentation_type=hd.seg.SegmentationTypeValues.FRACTIONAL,
         dimension_organization_type= 'TILED_FULL',
         omit_empty_frames=False,
-        segment_descriptions=[description_segment_3],
-        #segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
+        #segment_descriptions=[description_segment_1],
+        segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
         series_instance_uid=hd.UID(),
         series_number=3,
         sop_instance_uid=hd.UID(),
