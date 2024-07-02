@@ -498,8 +498,6 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
         position = 0
         stopcounter = 0
 
-        #for i in range(3):
-            #for j in range(3):
         for i in range(heights-1):
             for j in range(widths-1):
                 #test_patch = org_slide_ext[i * SLIDE_OFFSET: i * SLIDE_OFFSET + IMAGE_SIZE,
@@ -821,21 +819,23 @@ def writeDicomSegObject(image_path, seg_image, out_path):
     seg3_mask = seg_image[:,:] == 3
     seg4_mask = seg_image[:,:] == 4
 
-    #print(seg1_mask[1100:1105,1100:1105])
-    #print(seg1_mask[1200:1205,1200:1205])
-    #print(seg1_mask[1300:1305,1300:1305])
-
     # function stolen from idc-pan-cancer-archive repository to re-tile the numpy to match the tiling
-    # from the source image
-    
-    #print('passing in a numpy array of shape:',seg_image.shape)
-    #mask = disassemble_total_pixel_matrix(seg_image,image_dataset)
-    #print('received a numpy array of shape:',mask.shape)
-    
-    print('passing in a numpy array of shape:',seg1_mask.shape)
-    mask = disassemble_total_pixel_matrix(seg1_mask,image_dataset)
-    print('received a numpy array of shape:',mask.shape)
+    # from the source image.  It is being applied to each of the four channels because the function
+    # can't perform for an arbitrary number of channels. 
 
+    mask_1 = disassemble_total_pixel_matrix(seg1_mask,image_dataset)
+    mask_2 = disassemble_total_pixel_matrix(seg2_mask,image_dataset)
+    mask_3 = disassemble_total_pixel_matrix(seg3_mask,image_dataset)
+    mask_4 = disassemble_total_pixel_matrix(seg4_mask,image_dataset)
+
+    # pack the four channels into a single 4-channel boolean image
+    mask = np.zeros((mask_1.shape[0],mask_1.shape[1], mask_1.shape[2],4), bool)
+    mask[:,:,:,0] = mask_1
+    mask[:,:,:,1] = mask_2
+    mask[:,:,:,2] = mask_3
+    mask[:,:,:,3] = mask_4
+
+    print('converting an array shape for segmentation:',mask.shape)
 
     # Describe the algorithm that created the segmentation
     algorithm_identification = hd.AlgorithmIdentificationSequence(
@@ -900,8 +900,8 @@ def writeDicomSegObject(image_path, seg_image, out_path):
         omit_empty_frames=False,
         segmentation_type=hd.seg.SegmentationTypeValues.BINARY,
         dimension_organization_type='TILED_FULL',
-        #segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
-        segment_descriptions=[description_segment_1],
+        segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
+        #segment_descriptions=[description_segment_1],
         series_instance_uid=hd.UID(),
         series_number=2,
         sop_instance_uid=hd.UID(),
@@ -940,7 +940,7 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
     mask_3 = disassemble_total_pixel_matrix(seg_image[:,:,3],image_dataset)
     mask_4 = disassemble_total_pixel_matrix(seg_image[:,:,4],image_dataset)
     print('disassembled dimensions:',mask_1.shape)
-    mask = np.zeros((mask_1.shape[0],mask_1.shape[1], mask_1.shape[2], 4), np.float32)
+    mask = np.zeros((mask_1.shape[0],mask_1.shape[1], mask_1.shape[2],4), np.float32)
     mask[:,:,:,0] = mask_1
     mask[:,:,:,1] = mask_2
     mask[:,:,:,2] = mask_3
