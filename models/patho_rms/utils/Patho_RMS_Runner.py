@@ -741,8 +741,10 @@ def start_inference_mainthread(modelWeightPath,image_file,out_file,fractional):
     # pass the original dicom file, so header information can be read.  
     # Pass the multichannel segmentation image. 
     if fractional:
+        print('writing fractional segmentation')
         writeDicomFractionalSegObject(image_file,prob_image,out_file)
     else:
+        print('writing binary segmentation')
         writeDicomSegObject(image_file,predict_image,out_file)
     
 
@@ -810,33 +812,10 @@ def writeDicomSegObject(image_path, seg_image, out_path):
     # Read SM Image data set from PS3.10 files on disk.  This will provide the 
     # reference image size and other dicom header information
     image_dataset = dcmread(str(image_file))
-    print(f'writeDCM: image_file {image_file}')
+    #print(f'writeDCM: image_file {image_file}')
     #print(f'writeDCM: image_dataset {image_dataset}')
 
-    # convert from a labelmap format to a binary image for each separate channel
-    seg1_mask = seg_image[:,:] == 1
-    seg2_mask = seg_image[:,:] == 2
-    seg3_mask = seg_image[:,:] == 3
-    seg4_mask = seg_image[:,:] == 4
-
-    # function stolen from idc-pan-cancer-archive repository to re-tile the numpy to match the tiling
-    # from the source image.  It is being applied to each of the four channels because the function
-    # can't perform for an arbitrary number of channels. 
-
-    mask_1 = disassemble_total_pixel_matrix(seg1_mask,image_dataset)
-    mask_2 = disassemble_total_pixel_matrix(seg2_mask,image_dataset)
-    mask_3 = disassemble_total_pixel_matrix(seg3_mask,image_dataset)
-    mask_4 = disassemble_total_pixel_matrix(seg4_mask,image_dataset)
-
-    # pack the four channels into a single 4-channel boolean image
-    mask = np.zeros((mask_1.shape[0],mask_1.shape[1], mask_1.shape[2],4), bool)
-    mask[:,:,:,0] = mask_1
-    mask[:,:,:,1] = mask_2
-    mask[:,:,:,2] = mask_3
-    mask[:,:,:,3] = mask_4
-
-    print('converting an array shape for segmentation:',mask.shape)
-
+    
     # Describe the algorithm that created the segmentation
     algorithm_identification = hd.AlgorithmIdentificationSequence(
         name='FNLCR_RMS_seg_iou_0.7343_epoch_60_fold_03',
@@ -869,7 +848,7 @@ def writeDicomSegObject(image_path, seg_image, out_path):
 
     # Describe the segment ARMS
     description_segment_3 = hd.seg.SegmentDescription(
-        segment_number=3,
+        segment_number=1,
         segment_label=CHANNEL_DESCRIPTION['chan_3'],
         segmented_property_category=codes.cid7150.Tissue,
         #segmented_property_type='63449009',
@@ -894,16 +873,20 @@ def writeDicomSegObject(image_path, seg_image, out_path):
     )
 
     # Create the Segmentation instance
+    # tiled_full is better supported by highdicom and slim.  tile_pixel_array=True is set 
+    # because we are passing a label map to the constructor and asking highdicom to do the
+    # pixel copying to match the tiling in the source image. 
     seg_dataset = hd.seg.Segmentation(
         source_images=[image_dataset],
-        pixel_array=mask,
-        omit_empty_frames=False,
-        segmentation_type=hd.seg.SegmentationTypeValues.BINARY,
+        pixel_array=seg_image[:,:,3],
         dimension_organization_type='TILED_FULL',
-        segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
-        #segment_descriptions=[description_segment_1],
+        omit_empty_frames=False,
+        tile_pixel_array=True,
+        segmentation_type=hd.seg.SegmentationTypeValues.BINARY,
+        #segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
+        segment_descriptions=[description_segment_3],
         series_instance_uid=hd.UID(),
-        series_number=2,
+        series_number=1,
         sop_instance_uid=hd.UID(),
         instance_number=1,
         # the following two entries are added because the output resolution is different from the source
@@ -932,8 +915,9 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
     image_dataset = dcmread(str(image_file))
 
     # function stolen from idc-pan-cancer-archive repository to re-tile the numpy to match the tiling
-    # from the source image.  It only works for a 3D array, so we have to pick one of the channels. 
-    # picking channel 3 for now (ARMS)
+    # from the source image.  It only works for a 3D array, so we have to repeat for each channel and
+    # stack the results.
+ 
     print('passing in a numpy array of shape:',seg_image.shape)
     mask_1 = disassemble_total_pixel_matrix(seg_image[:,:,1],image_dataset)
     mask_2 = disassemble_total_pixel_matrix(seg_image[:,:,2],image_dataset)
@@ -1008,8 +992,7 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
     seg_dataset = hd.seg.Segmentation(
         source_images=[image_dataset],
         pixel_array=mask,
- 
-        #segmentation_type=hd.seg.SegmentationTypeValues.BINARY,
+        #tile_pixel_array=True,
         segmentation_type=hd.seg.SegmentationTypeValues.FRACTIONAL,
         dimension_organization_type= 'TILED_FULL',
         omit_empty_frames=False,
