@@ -2,6 +2,8 @@
 FROM mhubbase
 
 
+
+
 # pull the weights for the segresnet model trained on the abdominal total
 # segmentator data model from the MONAIAuto3DSeg Slicer extension repository
 ENV WEIGHTS_DIR="/root/.cache/torch/hub/checkpoints/"
@@ -12,6 +14,10 @@ RUN echo "weights:" ${WEIGHTS_URL}
 # download the weights
 # *** NOTE: this should be replaced with a call to buildutils/download_weights.sh
 RUN wget --directory-prefix ${WEIGHTS_DIR} ${WEIGHTS_URL}
+
+# download EfficientNet pretrained weights
+ENV PREWEIGHTS_DIR="/root/.cache/torch/checkpoints/"
+RUN wget --directory-prefix ${PREWEIGHTS_DIR} https://github.com/lukemelas/EfficientNet-PyTorch/releases/download/1.0/efficientnet-b4-6ed6700e.pth  
 
 
 # load prerequisites 

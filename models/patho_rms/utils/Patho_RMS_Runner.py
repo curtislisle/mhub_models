@@ -45,6 +45,9 @@ Image.MAX_IMAGE_PIXELS = None
 import albumentations as albu
 import segmentation_models_pytorch as smp
 
+# SNOMED codes for the RMS model class outputs
+#import metadata_config
+
 
 #------ Start Global definitiona ---------------------
 
@@ -133,6 +136,58 @@ CHANNEL_DESCRIPTION['chan_2_prob'] = 'Stroma_prob'
 CHANNEL_DESCRIPTION['chan_3_prob'] = 'ARMS_prob'
 CHANNEL_DESCRIPTION['chan_4_prob'] = 'ERMS_prob'
 
+# Dictionary mapping text label found in the XML annoations to tuple of
+# (finding_type, finding_category) codes to encode that finding
+finding_codes = {
+    "STROMA": (
+        hd.sr.CodedConcept(
+            meaning="Connective tissue",
+            value="181769001",
+            scheme_designator="SCT",
+        ),
+        hd.sr.CodedConcept(
+            meaning="Body substance",
+            value="91720002",
+            scheme_designator="SCT",
+        ),
+    ),
+    "ARMS": (
+        hd.sr.CodedConcept(
+            meaning="Alveolar rhabdomyosarcoma",
+            value="63449009",
+            scheme_designator="SCT",
+        ),
+        hd.sr.CodedConcept(
+            meaning="Morphologic abnormality",
+            value="49755003",
+            scheme_designator="SCT",
+        ),
+    ),
+    "ERMS": (
+        hd.sr.CodedConcept(
+            meaning="Embryonal rhabdomyosarcoma",
+            value="14269005",
+            scheme_designator="SCT",
+        ),
+        hd.sr.CodedConcept(
+            meaning="Morphologic abnormality",
+            value="49755003",
+            scheme_designator="SCT",
+        ),
+    ),
+    "NECROSIS": (
+        hd.sr.CodedConcept(
+            meaning="Necrosis",
+            value="6574001",
+            scheme_designator="SCT",
+        ),
+        hd.sr.CodedConcept(
+            meaning="Morphologic abnormality",
+            value="49755003",
+            scheme_designator="SCT",
+        ),
+    ),
+}
 
 #------ End Global definitiona ---------------------
 
@@ -823,54 +878,25 @@ def writeDicomSegObject(image_path, seg_image, out_path):
         family=codes.cid7162.ArtificialIntelligence
     )
 
-    # Describe the segment Necreosis
-    description_segment_1 = hd.seg.SegmentDescription(
-        segment_number=1,
-        segment_label=CHANNEL_DESCRIPTION['chan_1'],
-        segmented_property_category=codes.SCT.MorphologicallyAbnormalStructure,
-        segmented_property_type=codes.SCT.Necrosis,
-        algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
-        algorithm_identification=algorithm_identification,
-        tracking_uid=hd.UID(),
-        tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_1'])
-    )
- # Describe the segment STROMA
-    description_segment_2 = hd.seg.SegmentDescription(
-        segment_number=2,
-        segment_label=CHANNEL_DESCRIPTION['chan_2'],
-        segmented_property_category=codes.cid7150.Tissue,
-        segmented_property_type=codes.cid7166.ConnectiveTissue,
-        algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
-        algorithm_identification=algorithm_identification,
-        tracking_uid=hd.UID(),
-        tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_2'])
-    )
+    # use the method from Chris Bridge to create the segment descriptions because the correct
+    # SNOMED  codes are already setup in the metadata_config file.
 
-    # Describe the segment ARMS
-    description_segment_3 = hd.seg.SegmentDescription(
-        segment_number=1,
-        segment_label=CHANNEL_DESCRIPTION['chan_3'],
-        segmented_property_category=codes.cid7150.Tissue,
-        #segmented_property_type='63449009',
-        segmented_property_type=codes.cid7166.ConnectiveTissue,
-        algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
-        algorithm_identification=algorithm_identification,
-        tracking_uid=hd.UID(),
-        tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_3'])
-    )
-
-    # Describe the segment ERMS
-    description_segment_4 = hd.seg.SegmentDescription(
-        segment_number=4,
-        segment_label=CHANNEL_DESCRIPTION['chan_4'],
-        segmented_property_category=codes.cid7150.Tissue,
-        #segmented_property_type='14269005',
-        segmented_property_type=codes.cid7166.ConnectiveTissue,
-        algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
-        algorithm_identification=algorithm_identification,
-        tracking_uid=hd.UID(),
-        tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_4'])
-    )
+    segment_descriptions = []
+    
+    for number, (label, (prop_code, cat_code)) in enumerate(
+        finding_codes.items(),
+        start=1
+    ):
+        desc = hd.seg.SegmentDescription(
+            segment_number=number,
+            segment_label=label,
+            segmented_property_category=cat_code,
+            segmented_property_type=prop_code,
+            algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
+            algorithm_identification=algorithm_identification
+        )
+        segment_descriptions.append(desc)
+   
 
     # Create the Segmentation instance
     # tiled_full is better supported by highdicom and slim.  tile_pixel_array=True is set 
@@ -932,7 +958,7 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
 
     # make the derived image header information
     #derived_plane_positions,derived_pixel_measures = _compute_derived_image_attributes(image_dataset, mask)
-
+    
     # Describe the algorithm that created the segmentation
     algorithm_identification = hd.AlgorithmIdentificationSequence(
         name='FNLCR_RMS_probability_iou_0.7343_epoch_60',
@@ -940,54 +966,28 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
         family=codes.cid7162.ArtificialIntelligence
     )
 
-    # Describe the segment
-    description_segment_1 = hd.seg.SegmentDescription(
-        segment_number=1,
-        segment_label=CHANNEL_DESCRIPTION['chan_1_prob'],
-        segmented_property_category=codes.cid7150.Tissue,
-        segmented_property_type=codes.cid7166.ConnectiveTissue,
-        algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
-        algorithm_identification=algorithm_identification,
-        tracking_uid=hd.UID(),
-        tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_1_prob'])
-    )
- 
-    # Describe the segment
-    description_segment_2 = hd.seg.SegmentDescription(
-        segment_number=2,
-        segment_label=CHANNEL_DESCRIPTION['chan_2_prob'],
-        segmented_property_category=codes.cid7150.Tissue,
-        segmented_property_type=codes.cid7166.ConnectiveTissue,
-        algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
-        algorithm_identification=algorithm_identification,
-        tracking_uid=hd.UID(),
-        tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_2_prob'])
-    )
- 
-     # Describe the segment
-    description_segment_3 = hd.seg.SegmentDescription(
-        segment_number=3,
-        segment_label=CHANNEL_DESCRIPTION['chan_3_prob'],
-        segmented_property_category=codes.cid7150.Tissue,
-        segmented_property_type=codes.cid7166.ConnectiveTissue,
-        algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
-        algorithm_identification=algorithm_identification,
-        tracking_uid=hd.UID(),
-        tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_3_prob'])
-    )
- 
-     # Describe the segment
-    description_segment_4 = hd.seg.SegmentDescription(
-        segment_number=4,
-        segment_label=CHANNEL_DESCRIPTION['chan_4_prob'],
-        segmented_property_category=codes.cid7150.Tissue,
-        segmented_property_type=codes.cid7166.ConnectiveTissue,
-        algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
-        algorithm_identification=algorithm_identification,
-        tracking_uid=hd.UID(),
-        tracking_id='RMS segmentation_'+str(CHANNEL_DESCRIPTION['chan_4_prob'])
-    )
- 
+
+    # use the method from Chris Bridge to create the segment descriptions because the correct
+    # SNOMED  codes are already setup in the metadata_config file.
+
+    segment_descriptions = []
+    
+    for number, (label, (prop_code, cat_code)) in enumerate(
+        finding_codes.items(),
+        start=1
+    ):
+        desc = hd.seg.SegmentDescription(
+            segment_number=number,
+            segment_label=label,
+            segmented_property_category=cat_code,
+            segmented_property_type=prop_code,
+            algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
+            algorithm_identification= algorithm_identification
+        )
+        segment_descriptions.append(desc)
+   
+
+  
     # Create the Segmentation instance
     seg_dataset = hd.seg.Segmentation(
         source_images=[image_dataset],
@@ -996,8 +996,8 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
         segmentation_type=hd.seg.SegmentationTypeValues.FRACTIONAL,
         dimension_organization_type= 'TILED_FULL',
         omit_empty_frames=False,
-        #segment_descriptions=[description_segment_1],
-        segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
+        #segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
+        segment_descriptions=segment_descriptions,
         series_instance_uid=hd.UID(),
         series_number=3,
         sop_instance_uid=hd.UID(),
@@ -1011,8 +1011,25 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
         device_serial_number='Unknown'
     )
 
-    #print(seg_dataset)
+
     # change output file with some function is needed
-    outfileanme = out_path
-    seg_dataset.save_as(outfileanme)
+
+    # we use the current date in automatic file generation.  Add the date and time to the 
+    # output so multiple invocations are unique. 
+    #import arrow
+    #import os
+    #time_now = arrow.now()
+    #month = str(time_now.month)
+    #day = str(time_now.day)
+    #year = str(time_now.year)
+    #hour = str(time_now.hour)
+    #minute = str(time_now.minute)
+    #datestr = month+day+year+'_'+hour+minute
+    #outfilename = os.path.splitext(out_path)[0]+'_'+datestr+'.dcm'
+
+    image_cols = image_dataset.TotalPixelMatrixColumns
+    # add the image size to the output file name, so multiple sizes don't overwrite
+    import os
+    outfilename =  os.path.splitext(out_path)[0]+'_'+str(image_cols)+'.dcm'
+    seg_dataset.save_as(outfilename)
 
