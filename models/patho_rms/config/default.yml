@@ -6,7 +6,6 @@ general:
 execute:
 - DicomImporter
 - Patho_RMS_Runner
-#- DsegConverter
 - DataOrganizer
 
 modules:
@@ -24,12 +23,6 @@ modules:
     meta: 
       mod: 'sm'
 
-
-  #DsegConverter:
-  #  model_name: patho_rms
-  #  body_part_examined: TISSUE
-  #  source_segs: dicom:mod=seg
-  #  skip_empty_slices: False
   
   DataOrganizer:
     targets:

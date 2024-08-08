@@ -45,9 +45,6 @@ Image.MAX_IMAGE_PIXELS = None
 import albumentations as albu
 import segmentation_models_pytorch as smp
 
-# SNOMED codes for the RMS model class outputs
-#import metadata_config
-
 
 #------ Start Global definitiona ---------------------
 
@@ -138,6 +135,11 @@ CHANNEL_DESCRIPTION['chan_4_prob'] = 'ERMS_prob'
 
 # Dictionary mapping text label found in the XML annoations to tuple of
 # (finding_type, finding_category) codes to encode that finding
+
+# SNOMED codes for the RMS model class outputs
+
+import highdicom as hd
+
 finding_codes = {
     "STROMA": (
         hd.sr.CodedConcept(
@@ -858,6 +860,7 @@ def disassemble_total_pixel_matrix(
         )
 
 
+
 def writeDicomSegObject(image_path, seg_image, out_path):
 
     # Path to multi-frame SM image instance stored as PS3.10 file
@@ -867,9 +870,33 @@ def writeDicomSegObject(image_path, seg_image, out_path):
     # Read SM Image data set from PS3.10 files on disk.  This will provide the 
     # reference image size and other dicom header information
     image_dataset = dcmread(str(image_file))
-    #print(f'writeDCM: image_file {image_file}')
-    #print(f'writeDCM: image_dataset {image_dataset}')
 
+    # pull out the separate channels
+    seg1 = np.zeros((seg_image.shape[0],seg_image.shape[1]), np.uint8)
+    seg2 = np.zeros((seg_image.shape[0],seg_image.shape[1]), np.uint8)
+    seg3 = np.zeros((seg_image.shape[0],seg_image.shape[1]), np.uint8)
+    seg4 = np.zeros((seg_image.shape[0],seg_image.shape[1]), np.uint8)
+
+    for i in range(seg_image.shape[0]):
+        for j in range(seg_image.shape[1]):
+            seg1[i,j] = 1 if seg_image[i,j] == 1 else 0
+            seg2[i,j] = 1 if seg_image[i,j] == 2 else 0
+            seg3[i,j] = 1 if seg_image[i,j] == 3 else 0
+            seg4[i,j] = 1 if seg_image[i,j] == 4 else 0
+
+    print('passing in a numpy array of shape:',seg_image.shape)
+
+    mask_1 = disassemble_total_pixel_matrix(seg1,image_dataset)
+    mask_2 = disassemble_total_pixel_matrix(seg2,image_dataset)
+    mask_3 = disassemble_total_pixel_matrix(seg3,image_dataset)
+    mask_4 = disassemble_total_pixel_matrix(seg4,image_dataset)
+    # reclaim memory
+    del mask_1, mask_2, mask_3, mask_4
+    mask = np.zeros((mask_1.shape[0],mask_1.shape[1], mask_1.shape[2],4), np.uint8)
+    mask[:,:,:,0] = mask_1
+    mask[:,:,:,1] = mask_2
+    mask[:,:,:,2] = mask_3
+    mask[:,:,:,3] = mask_4
     
     # Describe the algorithm that created the segmentation
     algorithm_identification = hd.AlgorithmIdentificationSequence(
@@ -879,7 +906,7 @@ def writeDicomSegObject(image_path, seg_image, out_path):
     )
 
     # use the method from Chris Bridge to create the segment descriptions because the correct
-    # SNOMED  codes are already setup in the metadata_config file.
+    # SNOMED  codes are already setup in the finding_codes structure.
 
     segment_descriptions = []
     
@@ -904,13 +931,13 @@ def writeDicomSegObject(image_path, seg_image, out_path):
     # pixel copying to match the tiling in the source image. 
     seg_dataset = hd.seg.Segmentation(
         source_images=[image_dataset],
-        pixel_array=seg_image[:,:,3],
+        pixel_array=mask,
         dimension_organization_type='TILED_FULL',
         omit_empty_frames=False,
-        tile_pixel_array=True,
+        tile_pixel_array=False,
         segmentation_type=hd.seg.SegmentationTypeValues.BINARY,
         #segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
-        segment_descriptions=[description_segment_3],
+        segment_descriptions=segment_descriptions,
         series_instance_uid=hd.UID(),
         series_number=1,
         sop_instance_uid=hd.UID(),
