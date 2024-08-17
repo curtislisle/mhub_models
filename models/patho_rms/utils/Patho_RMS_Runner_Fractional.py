@@ -9,6 +9,9 @@ Author: Curtis Lisle
 Email:  clisle@knowledgevis.com
 based on examples from Dennis Bontempi
 model developed and trained by Dr. Hyun Jung, NCI
+
+This model outputs a fractional segmentation dicom object with four classes:
+(ARMS,ERMS,STROMA,NECROSIS). 
 ---------------------------------------------------
 """
 
@@ -191,7 +194,7 @@ finding_codes = {
     ),
 }
 
-#------ End Global definitiona ---------------------
+#------ End Global definitions ---------------------
 
 
 #  using highdicom library (from MGH) for dicom support. see examples at:
@@ -199,9 +202,9 @@ finding_codes = {
 
 
 #@IO.Config('batchsize', int, 64, the='Number of slices to be processed simultaneously. A smaller batch size requires less memory but may be slower.')
-@IO.Config('fractional', bool, False, the='output a fractional segmentation mask indicating probability of class membership. Default is Binary Segmentation')
-class Patho_RMS_Runner(ModelRunner):
-    fractional : bool
+#@IO.Config('fractional', bool, False, the='output a fractional segmentation mask indicating probability of class membership. Default is Binary Segmentation')
+class Patho_RMS_Runner_Fractional(ModelRunner):
+    #fractional : bool
     #batchsize: int
 
     # Question:  I don't understand how the channels are specified in the 'roi' argument
@@ -210,7 +213,7 @@ class Patho_RMS_Runner(ModelRunner):
     @IO.Output('structures', 'pathology_rms.seg.dcm', 'dicomseg:mod=seg:model=patho_rms', bundle='model', the='predicted tissue classes')
     def task(self, instance: Instance, image: InstanceData, structures: InstanceData) -> None:
         self.log.debug("Running the segmentation.")
-        print('fractional segmentation mode is' + 'enabled' if self.fractional else 'disabled')
+        print('fractional segmentation mode is enabled')
 
         # *** hardcode the model weights location until figuring out
         # the initialization method
@@ -223,7 +226,7 @@ class Patho_RMS_Runner(ModelRunner):
         self.log.debug(f'discovered input file is {inputImagePath}')
         self.log.debug(f'output path is {structures.abspath}')
         # run model. Should this be in a subprocess?
-        outfile = self.infer_rhabdo(modelCheckpointFilePath,inputImagePath,structures.abspath,self.fractional)
+        outfile = self.infer_rhabdo(modelCheckpointFilePath,inputImagePath,structures.abspath)
        
 
     # look in the directory for a dicom file
@@ -236,17 +239,19 @@ class Patho_RMS_Runner(ModelRunner):
         return file_list[0]
 
 
-    def infer_rhabdo(self,modelCheckpointFilePath,image_file,out_file,fractional,**kwargs):
+    def infer_rhabdo(self,modelCheckpointFilePath,image_file,out_file,**kwargs):
         self.log.debug(" input image filename = {}".format(image_file))
         # setup the GPU environment for pytorch
         if USE_GPU:
             os.environ['CUDA_VISIBLE_DEVICES'] = '0'
             DEVICE = 'cuda'
+            self.log.debug('using GPU')
         else:
             DEVICE = 'cpu'
+            self.log.debug('using CPU')
 
         self.log.debug('perform forward inferencing')
-        start_inference_mainthread(modelCheckpointFilePath,image_file,out_file,fractional)
+        start_inference_mainthread(modelCheckpointFilePath,image_file,out_file)
         self.log.debug('inferencing complete')
 
         # return the name of the output file
@@ -346,7 +351,7 @@ def _gray_to_labelmap(input_probs):
     heatmap[np.average(heatmap, axis=-1)==0, :] = 1.
     return heatmap
 
-
+'''
 # saved as I tried to change the output
 def _gray_to_color(input_probs):
 
@@ -384,7 +389,7 @@ def _gray_to_color(input_probs):
     heatmap[np.average(heatmap, axis=-1)==0, :] = 1.
 
     return heatmap
-
+'''
 
 # return a string identifier of the basename of the current image file
 def returnIdentifierFromImagePath(impath):
@@ -766,7 +771,7 @@ def inference_image(model, image_path, BATCH_SIZE, num_classes):
     return prob_image,predict_image
 
 
-def start_inference_mainthread(modelWeightPath,image_file,out_file,fractional):
+def start_inference_mainthread(modelWeightPath,image_file,out_file):
     reset_seed(1)
 
     best_prec1_valid = 0.
@@ -792,18 +797,12 @@ def start_inference_mainthread(modelWeightPath,image_file,out_file,fractional):
     print('load pretrained weights')
     model = load_best_model(model, saved_weights_list[-1], best_prec1_valid)
     print('Loading model is finished!!!!!!!')
-
     # return image data so toplevel task can write it out
     prob_image,predict_image = inference_image(model,image_file, BATCH_SIZE, len(CLASS_VALUES))
     # pass the original dicom file, so header information can be read.  
-    # Pass the multichannel segmentation image. 
-    if fractional:
-        print('writing fractional segmentation')
-        writeDicomFractionalSegObject(image_file,prob_image,out_file)
-    else:
-        print('writing binary segmentation')
-        writeDicomSegObject(image_file,predict_image,out_file)
-    
+    print('writing fractional segmentation')
+    writeDicomFractionalSegObject(image_file,prob_image,out_file)
+   
 
 
 #---------------- DICOM export --------
@@ -861,102 +860,6 @@ def disassemble_total_pixel_matrix(
 
 
 
-def writeDicomSegObject(image_path, seg_image, out_path):
-
-    # Path to multi-frame SM image instance stored as PS3.10 file
-    image_file = Path(image_path)
-    print(f'writeDCM: image_path {image_path}')
-
-    # Read SM Image data set from PS3.10 files on disk.  This will provide the 
-    # reference image size and other dicom header information
-    image_dataset = dcmread(str(image_file))
-
-    # pull out the separate channels
-    seg1 = np.zeros((seg_image.shape[0],seg_image.shape[1]), np.uint8)
-    seg2 = np.zeros((seg_image.shape[0],seg_image.shape[1]), np.uint8)
-    seg3 = np.zeros((seg_image.shape[0],seg_image.shape[1]), np.uint8)
-    seg4 = np.zeros((seg_image.shape[0],seg_image.shape[1]), np.uint8)
-
-    for i in range(seg_image.shape[0]):
-        for j in range(seg_image.shape[1]):
-            seg1[i,j] = 1 if seg_image[i,j] == 1 else 0
-            seg2[i,j] = 1 if seg_image[i,j] == 2 else 0
-            seg3[i,j] = 1 if seg_image[i,j] == 3 else 0
-            seg4[i,j] = 1 if seg_image[i,j] == 4 else 0
-
-    print('passing in a numpy array of shape:',seg_image.shape)
-
-    mask_1 = disassemble_total_pixel_matrix(seg1,image_dataset)
-    mask_2 = disassemble_total_pixel_matrix(seg2,image_dataset)
-    mask_3 = disassemble_total_pixel_matrix(seg3,image_dataset)
-    mask_4 = disassemble_total_pixel_matrix(seg4,image_dataset)
-    # reclaim memory
-    del mask_1, mask_2, mask_3, mask_4
-    mask = np.zeros((mask_1.shape[0],mask_1.shape[1], mask_1.shape[2],4), np.uint8)
-    mask[:,:,:,0] = mask_1
-    mask[:,:,:,1] = mask_2
-    mask[:,:,:,2] = mask_3
-    mask[:,:,:,3] = mask_4
-    
-    # Describe the algorithm that created the segmentation
-    algorithm_identification = hd.AlgorithmIdentificationSequence(
-        name='FNLCR_RMS_seg_iou_0.7343_epoch_60_fold_03',
-        version='v1.0',
-        family=codes.cid7162.ArtificialIntelligence
-    )
-
-    # use the method from Chris Bridge to create the segment descriptions because the correct
-    # SNOMED  codes are already setup in the finding_codes structure.
-
-    segment_descriptions = []
-    
-    for number, (label, (prop_code, cat_code)) in enumerate(
-        finding_codes.items(),
-        start=1
-    ):
-        desc = hd.seg.SegmentDescription(
-            segment_number=number,
-            segment_label=label,
-            segmented_property_category=cat_code,
-            segmented_property_type=prop_code,
-            algorithm_type=hd.seg.SegmentAlgorithmTypeValues.AUTOMATIC,
-            algorithm_identification=algorithm_identification
-        )
-        segment_descriptions.append(desc)
-   
-
-    # Create the Segmentation instance
-    # tiled_full is better supported by highdicom and slim.  tile_pixel_array=True is set 
-    # because we are passing a label map to the constructor and asking highdicom to do the
-    # pixel copying to match the tiling in the source image. 
-    seg_dataset = hd.seg.Segmentation(
-        source_images=[image_dataset],
-        pixel_array=mask,
-        dimension_organization_type='TILED_FULL',
-        omit_empty_frames=False,
-        tile_pixel_array=False,
-        segmentation_type=hd.seg.SegmentationTypeValues.BINARY,
-        #segment_descriptions=[description_segment_1,description_segment_2,description_segment_3,description_segment_4],
-        segment_descriptions=segment_descriptions,
-        series_instance_uid=hd.UID(),
-        series_number=1,
-        sop_instance_uid=hd.UID(),
-        instance_number=1,
-        # the following two entries are added because the output resolution is different from the source
-        #pixel_measures=derived_pixel_measures,
-        #plane_positions= derived_plane_positions,
-        manufacturer='NCI/FNLCR',
-        manufacturer_model_name='FNLCR_IVG_RMS_iou_0.7343_0.7175_epoch_60',
-        software_versions='binary_seg_mhub_v1',
-        device_serial_number='Unknown'
-    )
-
-    #print(seg_dataset)
-    # change output file with some function is needed
-    outfileanme = out_path
-    seg_dataset.save_as(outfileanme)
-
-
 
 def writeDicomFractionalSegObject(image_path, seg_image, out_path):
 
@@ -982,21 +885,15 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
     mask[:,:,:,1] = mask_2
     mask[:,:,:,2] = mask_3
     mask[:,:,:,3] = mask_4
-
-    # make the derived image header information
-    #derived_plane_positions,derived_pixel_measures = _compute_derived_image_attributes(image_dataset, mask)
-    
+ 
     # Describe the algorithm that created the segmentation
     algorithm_identification = hd.AlgorithmIdentificationSequence(
-        name='FNLCR_RMS_probability_iou_0.7343_epoch_60',
+        name='FNLCR_IVG_RMS_probability_iou_0.7343_epoch_60',
         version='v1.0',
         family=codes.cid7162.ArtificialIntelligence
     )
-
-
     # use the method from Chris Bridge to create the segment descriptions because the correct
     # SNOMED  codes are already setup in the metadata_config file.
-
     segment_descriptions = []
     
     for number, (label, (prop_code, cat_code)) in enumerate(
@@ -1013,8 +910,6 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
         )
         segment_descriptions.append(desc)
    
-
-  
     # Create the Segmentation instance
     seg_dataset = hd.seg.Segmentation(
         source_images=[image_dataset],
@@ -1037,26 +932,5 @@ def writeDicomFractionalSegObject(image_path, seg_image, out_path):
         software_versions='fractional_seg_mhub_v1',
         device_serial_number='Unknown'
     )
-
-
-    # change output file with some function is needed
-
-    # we use the current date in automatic file generation.  Add the date and time to the 
-    # output so multiple invocations are unique. 
-    #import arrow
-    #import os
-    #time_now = arrow.now()
-    #month = str(time_now.month)
-    #day = str(time_now.day)
-    #year = str(time_now.year)
-    #hour = str(time_now.hour)
-    #minute = str(time_now.minute)
-    #datestr = month+day+year+'_'+hour+minute
-    #outfilename = os.path.splitext(out_path)[0]+'_'+datestr+'.dcm'
-
-    image_cols = image_dataset.TotalPixelMatrixColumns
-    # add the image size to the output file name, so multiple sizes don't overwrite
-    import os
-    outfilename =  os.path.splitext(out_path)[0]+'_'+str(image_cols)+'.dcm'
-    seg_dataset.save_as(outfilename)
+    seg_dataset.save_as(out_path)
 

@@ -1,7 +1,7 @@
 general:
   data_base_dir: /app/data
   version: 1.0
-  description: "Default configuration for Rhabdomyosarcoma pathology segmentation (dicom in, dicom out). A Fractional segmentation is output."
+  description: "Fractional segmentation configuration for Rhabdomyosarcoma pathology segmentation (dicom in, dicom out)"
 
 execute:
 - DicomImporter
@@ -16,8 +16,7 @@ modules:
     meta: 
       mod: 'sm'
 
-  # run the model.  If fractional=True, output is Fractional Segmentation Object, 
-  # otherwise it is multiclass Binary Segmentation Object. Operates on 'Slide Microscopy' image types
+  # run the fractional model
   Patho_RMS_Runner_Fractional:
     meta: 
       mod: 'sm'

@@ -1,0 +1,27 @@
+general:
+  data_base_dir: /app/data
+  version: 1.0
+  description: "Binary Segmentation configuration for Rhabdomyosarcoma pathology segmentation (dicom in, dicom out)"
+
+execute:
+- DicomImporter
+- Patho_RMS_Runner_Binary
+- DataOrganizer
+
+modules:
+  DicomImporter:
+    source_dir: input_data
+    import_dir: sorted_data
+    sort_data: True
+    meta: 
+      mod: 'sm'
+
+  # run the binary segmentation model
+  Patho_RMS_Runner_Binary:
+    meta: 
+      mod: 'sm'
+
+  
+  DataOrganizer:
+    targets:
+    - dicomseg:mod=seg-->[i:sid]/pathology_rms_binary.seg.dcm
