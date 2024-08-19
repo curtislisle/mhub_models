@@ -91,6 +91,7 @@ PREDICTION_PATH = '.'
 IMAGE_SIZE = 384
 IMAGE_HEIGHT = 384
 IMAGE_WIDTH = 384
+REGION_RGBA = 4
 CHANNELS = 3
 NUM_CLASSES = 5
 CLASS_VALUES = [0, 50, 100, 150, 200]
@@ -107,7 +108,7 @@ THRESHOLD_MAGNIFICATION = 2.5
 ASSUMED_SOURCE_MAGNIFICATION = 39.5882818685669
 
 # what % interval we should print out progress so it can be snooped by the web interface
-REPORTING_INTERVAL = 5
+REPORTING_INTERVAL = 20
 
 rot90 = albu.Rotate(limit=(90, 90), always_apply=True)
 rotn90 = albu.Rotate(limit=(-90, -90), always_apply=True)
@@ -333,63 +334,6 @@ def _unaugment(index, image):
 
     return image
 
-def _gray_to_labelmap(input_probs):
-    index_map = (np.argmax(input_probs, axis=-1)*50).astype('uint8')
-    height = input_probs.shape[0]
-    width = input_probs.shape[1]
-    heatmap = np.zeros((height, width, 1), np.float32)
-    # Background
-    heatmap[index_map == 0, 0] = input_probs[:, :, 0][index_map == 0]
-    # Necrosis
-    heatmap[index_map==50, 0] = input_probs[:, :, 1][index_map==50]
-    # Stroma
-    heatmap[index_map==100, 0] = input_probs[:, :, 2][index_map==100]
-    # ERMS
-    heatmap[index_map==150, 0] = input_probs[:, :, 3][index_map==150]
-    # ARMS
-    heatmap[index_map==200, 0] = input_probs[:, :, 4][index_map==200]
-    heatmap[np.average(heatmap, axis=-1)==0, :] = 1.
-    return heatmap
-
-'''
-# saved as I tried to change the output
-def _gray_to_color(input_probs):
-
-    index_map = (np.argmax(input_probs, axis=-1)*50).astype('uint8')
-    height = index_map.shape[0]
-    width = index_map.shape[1]
-
-    heatmap = np.zeros((height, width, 3), np.float32)
-
-    # Background
-    heatmap[index_map == 0, 0] = input_probs[:, :, 0][index_map == 0]
-    heatmap[index_map == 0, 1] = input_probs[:, :, 0][index_map == 0]
-    heatmap[index_map == 0, 2] = input_probs[:, :, 0][index_map == 0]
-
-    # Necrosis
-    heatmap[index_map==50, 0] = input_probs[:, :, 1][index_map==50]
-    heatmap[index_map==50, 1] = input_probs[:, :, 1][index_map==50]
-    heatmap[index_map==50, 2] = 0.
-
-    # Stroma
-    heatmap[index_map==100, 0] = 0.
-    heatmap[index_map==100, 1] = input_probs[:, :, 2][index_map==100]
-    heatmap[index_map==100, 2] = 0.
-
-    # ERMS
-    heatmap[index_map==150, 0] = input_probs[:, :, 3][index_map==150]
-    heatmap[index_map==150, 1] = 0.
-    heatmap[index_map==150, 2] = 0.
-
-    # ARMS
-    heatmap[index_map==200, 0] = 0.
-    heatmap[index_map==200, 1] = 0.
-    heatmap[index_map==200, 2] = input_probs[:, :, 4][index_map==200]
-
-    heatmap[np.average(heatmap, axis=-1)==0, :] = 1.
-
-    return heatmap
-'''
 
 # return a string identifier of the basename of the current image file
 def returnIdentifierFromImagePath(impath):
@@ -408,6 +352,35 @@ def isNotANumber(variable):
         return False
     except:
         return True
+
+# debug routine for printing strange sized tiles returned from patch etraction
+def displayTileMetadata(tile,region, i, j):
+    print('-----------------------------')
+    print('wierd tile shape encountered:')
+    print('Tile shape:',tile.shape)
+    print('Region:',region)
+    print('i:',i,'j:',j)
+
+
+# turn a partial tile (smaller than the model size) into a full tile by padding with slide
+# background RGBA = (240,240,240,240). We accomplish this by creating a full tile and 
+# copying the actual slide subset data into the full tile before returning
+
+def fillPartialTile(partialTile):
+    sizeOfX = partialTile.shape[0]
+    sizeOfY = partialTile.shape[1]
+    fullTile = np.ones((IMAGE_SIZE, IMAGE_SIZE, REGION_RGBA),np.uint8)*240
+    # this is is on the corner, we need to copy over a partial x and y record
+    if sizeOfX < IMAGE_WIDTH and sizeOfY < IMAGE_HEIGHT:
+        fullTile[:sizeOfX,:sizeOfY,:] = partialTile[:sizeOfX,:sizeOfY,:]
+    # we are at the end of a row, so we need to copy over a partial x record
+    elif sizeOfX < IMAGE_WIDTH:
+        fullTile[:sizeOfX,:,:] = partialTile[:sizeOfX,:,:]
+    # we are on the bottom line, so we need to copy over a partial y record
+    elif sizeOfY < IMAGE_HEIGHT:
+        fullTile[:,:sizeOfY,:] = partialTile[:,:sizeOfY,:]
+    return fullTile
+    
 
 #---------------- main inferencing routine ------------------
 def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
@@ -560,8 +533,8 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
         position = 0
         stopcounter = 0
 
-        for i in range(heights-1):
-            for j in range(widths-1):
+        for i in range(heights):
+            for j in range(widths):
                 #test_patch = org_slide_ext[i * SLIDE_OFFSET: i * SLIDE_OFFSET + IMAGE_SIZE,
                 #             j * SLIDE_OFFSET: j * SLIDE_OFFSET + IMAGE_SIZE, 0:3]
 
@@ -576,6 +549,13 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
                 rawtile, mimetype = source.getRegion(format=large_image.tilesource.TILE_FORMAT_NUMPY,
                                                         region=myRegion, scale={'magnification': ANALYSIS_MAGNIFICATION},
                                                         fill="white",output={'maxWidth':IMAGE_SIZE,'maxHeight':IMAGE_SIZE})
+                
+                # if this is a boundary tile, then fill in the partial tile that comes from the getRegion call into 
+                # a complete tile by adding a white-ish boundary to make the tile the usual, full size
+                if (rawtile.shape[0] < IMAGE_SIZE) or (rawtile.shape[1] < IMAGE_SIZE):
+                    #print('ran off the X or Y edge: xcorner:',xcorner,'ycorner:',ycorner,'shape:',tile.shape)
+                    rawtile = fillPartialTile(rawtile)
+
                 # strip off any extra channels, RGB only
                 test_patch = rawtile[:,:,0:3]
                 # print out funny shaped patches... 
@@ -600,17 +580,6 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
 
                     position = 0
                     inference_index = []
-
-                # save data to look at
-                #if (temp_i>100) and (temp_i<400):
-                if (False):
-                    np.save('hyun-patch-'+unique_identifier+'-'+str(temp_i)+'_'+str(temp_j)+'.npy', test_patch)
-                    print('test_patch shape:', test_patch.shape, 'i:',temp_i,' j:',temp_j)
-                    np.save('hyun-tensor-' + unique_identifier + '-' + str(temp_i) + '_' + str(temp_j) + '.npy', test_patch_tensor.cpu())
-                    print('test_tensor shape:', test_patch.shape, 'i:', temp_i, ' j:', temp_j)
-                    from PIL import Image
-                    im = Image.fromarray(test_patch)
-                    im.save('hyun-patch-'+str(temp_i)+'_'+str(temp_j)+'.jpeg')
 
                 # check that it is time to report progress.  If so, print it and flush I/O to make sure it comes 
                 # out right after it is printed 
@@ -637,8 +606,8 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
         print('Inferencing complete. Constructing out image from patches')
 
         patch_iter = 0
-        for i in range(heights-1 ):
-            for j in range(widths-1):
+        for i in range(heights):
+            for j in range(widths):
                 prob_map_seg[i * SLIDE_OFFSET: i * SLIDE_OFFSET + IMAGE_SIZE,
                 j * SLIDE_OFFSET: j * SLIDE_OFFSET + IMAGE_SIZE,:] \
                     += np.multiply(linedup_predictions[patch_iter, :, :, :], kernel)
@@ -648,6 +617,7 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
                 patch_iter += 1
         #np.save("prob_map_seg.npy",prob_map_seg)
         #np.save('weight_sum.npy',weight_sum)
+        print('Do not worry about the following divide by zero. It happens in valid output images')
         prob_map_seg = np.true_divide(prob_map_seg, weight_sum)
         
         # output the gaussian smoother to look at the overlaps
@@ -670,52 +640,18 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
         prob_map_valid = _unaugment(b, prob_map_valid)
         prob_map_seg_stack += prob_map_valid / num_tta
 
+  
         # free main system memory since the images are big
         del prob_map_valid
         gc.collect()
 
     # save numpy in same directory as input image
-    fileNoExtension = os.path.basename(image_path).split('.')[0]
-    dirName = os.path.dirname(image_path)
-    numpyFileName = os.path.join(dirName,fileNoExtension+'_prob_map_seg_stack.npy')
+    #fileNoExtension = os.path.basename(image_path).split('.')[0]
+    #dirName = os.path.dirname(image_path)
+    #numpyFileName = os.path.join(dirName,fileNoExtension+'_prob_map_seg_stack.npy')
     #np.save(numpyFileName, prob_map_seg_stack)
-    print('prob_map_seg_stack:',prob_map_seg_stack.shape)
-    pred_map_final = np.argmax(prob_map_seg_stack, axis=-1)
-    print('pred_map_final:',pred_map_final.shape)
-    print('pred_map_final dtype:',pred_map_final.dtype)
-    pred_map_final_gray = pred_map_final.astype('uint8') * 50
-    print('pred_map_final_gray dtype:',pred_map_final_gray.dtype)
-    #del pred_map_final
-    gc.collect()
-    pred_map_final_ones = [(pred_map_final_gray == v) for v in CLASS_VALUES]
-    del pred_map_final_gray
-    gc.collect()
-    pred_map_final_stack = np.stack(pred_map_final_ones, axis=-1).astype('uint8')
-    print('pred_map_final_stack shape:',pred_map_final_stack.shape)
-    del pred_map_final_ones
-    gc.collect()
-
-    pred_labelmap = pred_map_final
-    #pred_labelmap = _gray_to_labelmap(pred_map_final_stack)
-    #pred_colormap = _gray_to_color(pred_map_final_stack)
-    print('pred_labemap:',pred_labelmap.shape)
-    del pred_map_final_stack
-    gc.collect()
-
-    out_prob = prob_map_seg_stack
-    np.save('/app/data/output_data/prob_out.npy', out_prob)
-    #prob_colormap = _gray_to_color(prob_map_seg_stack)
-    #np.save('prob_colormap.npy', prob_colormap)
-
-    # changing output to not be scaled by 256,  instead each channel is either 0 or 1
-    out_label = (pred_labelmap).astype('uint8')
-    #out_color = (pred_colormap*255).astype('uint8')
-
-    #numpyFileName = os.path.join(dirName,fileNoExtension+'_out_color.npy')
-    np.save('/app/data/output_data/pred_out_label.npy', out_label)
-    # return image instead of saving directly
-    return out_prob, out_label
-
+    print('returning probability map size:',prob_map_seg_stack.shape)
+    return prob_map_seg_stack
 
 
 
@@ -767,8 +703,8 @@ def load_best_model(model, path_to_model, best_prec1=0.0):
 
 def inference_image(model, image_path, BATCH_SIZE, num_classes):
     kernel = _gaussian_2d(num_classes, 0.5, 0.0)
-    prob_image,predict_image = _inference(model, image_path, BATCH_SIZE, num_classes, kernel, 1)
-    return prob_image,predict_image
+    prob_image = _inference(model, image_path, BATCH_SIZE, num_classes, kernel, 1)
+    return prob_image
 
 
 def start_inference_mainthread(modelWeightPath,image_file,out_file):
@@ -798,7 +734,7 @@ def start_inference_mainthread(modelWeightPath,image_file,out_file):
     model = load_best_model(model, saved_weights_list[-1], best_prec1_valid)
     print('Loading model is finished!!!!!!!')
     # return image data so toplevel task can write it out
-    prob_image,predict_image = inference_image(model,image_file, BATCH_SIZE, len(CLASS_VALUES))
+    prob_image = inference_image(model,image_file, BATCH_SIZE, len(CLASS_VALUES))
     # pass the original dicom file, so header information can be read.  
     print('writing fractional segmentation')
     writeDicomFractionalSegObject(image_file,prob_image,out_file)
