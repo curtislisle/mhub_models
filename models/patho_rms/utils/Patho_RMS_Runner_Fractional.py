@@ -480,7 +480,7 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
 
         PATCH_OFFSET = IMAGE_SIZE // 2
         SLIDE_OFFSET = IMAGE_SIZE // 2
-        print('using', (PATCH_OFFSET//IMAGE_SIZE*100),'% patch overlap')
+        print('using', (PATCH_OFFSET/IMAGE_SIZE*100.0),'% patch overlap')
 
         # these are the counts in the x and y direction.  i.e. how many samples across the image.
         # the divident is slide_offset because this is how much the window is moved each time
@@ -630,8 +630,8 @@ def _inference(model, image_path, BATCH_SIZE, num_classes, kernel, num_tta=1):
         # this induced a 1/2 PATCH_OFFSET shift in the output image compared with the reference DICOM. 
         # so replace with a direct copy operation instead. 
         # *********************************
-        #prob_map_valid = prob_map_seg[PATCH_OFFSET:PATCH_OFFSET + height, PATCH_OFFSET:PATCH_OFFSET + width, :]
-        prob_map_valid = prob_map_seg[0:height, 0: width, :]
+        prob_map_valid = prob_map_seg[PATCH_OFFSET:PATCH_OFFSET + height, PATCH_OFFSET:PATCH_OFFSET + width, :]
+        #prob_map_valid = prob_map_seg[0:height, 0: width, :]
 
         # free main system memory since the images are big
         del prob_map_seg

@@ -1,0 +1,30 @@
+general:
+  data_base_dir: /app/data
+  version: 1.0
+  description: "Fractional segmentation configuration for Rhabdomyosarcoma pathology segmentation (dicom in, dicom out)"
+
+execute:
+- WsiDicomImporter
+- Patho_RMS_Runner_Fractional
+- DataOrganizer
+
+# The RMS model has only been validated for 10x magnification images, so look through the 
+# pyramidal DICOM-WSI image and select the best magnification level to use for the model (10x with +/- 2.0x tolerance)
+modules:
+  WsiDicomImporter:
+    source_dir: input_data
+    import_dir: sorted_data
+    magnification: 4
+    magTolerance: 2.0
+    meta: 
+      mod: 'sm'
+
+  # run the fractional model
+  Patho_RMS_Runner_Fractional:
+    meta: 
+      mod: 'sm'
+
+  # copy the model output to the output directory
+  DataOrganizer:
+    targets:
+    - dicomseg:mod=seg-->[i:sid]/pathology_rms_fractional.seg.dcm
