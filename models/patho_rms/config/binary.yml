@@ -5,6 +5,7 @@ general:
 
 execute:
 - DicomImporter
+- WsiMagnificationExtractor
 - Patho_RMS_Runner_Binary
 - DataOrganizer
 
@@ -16,6 +17,15 @@ modules:
     meta: 
       mod: 'sm'
 
+# look through the pyramidal DICOM-WSI image and select the best magnification 
+# level to use for the model (10x with +/- 2.0x tolerance)
+
+  WsiMagnificationExtractor:
+    target_magnification: 10
+    magnification_tolerance: 2.0
+    meta: 
+      mod: 'sm'
+      
   # run the binary segmentation model
   Patho_RMS_Runner_Binary:
     meta: 

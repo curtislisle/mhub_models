@@ -1,10 +1,11 @@
 general:
   data_base_dir: /app/data
   version: 1.0
-  description: "Default configuration for Rhabdomyosarcoma pathology segmentation (dicom in, dicom out). A Fractional segmentation is output."
+  description: "Fractional segmentation configuration for Rhabdomyosarcoma pathology segmentation (dicom in, dicom out)"
 
 execute:
 - DicomImporter
+- WsiMagnificationExtractor
 - Patho_RMS_Runner_Fractional
 - DataOrganizer
 
@@ -16,8 +17,16 @@ modules:
     meta: 
       mod: 'sm'
 
-  # run the model.  If fractional=True, output is Fractional Segmentation Object, 
-  # otherwise it is multiclass Binary Segmentation Object. Operates on 'Slide Microscopy' image types
+# look through the pyramidal DICOM-WSI image and select the best magnification 
+# level to use for the model (10x with +/- 2.0x tolerance)
+  WsiMagnificationExtractor:
+    target_magnification: 10
+    magnification_tolerance: 2.0
+    meta: 
+      mod: 'sm'
+      
+
+  # run the fractional model
   Patho_RMS_Runner_Fractional:
     meta: 
       mod: 'sm'
