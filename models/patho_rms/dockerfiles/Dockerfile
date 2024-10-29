@@ -2,10 +2,8 @@
 FROM mhubbase
 
 
-
-
-# pull the weights for the segresnet model trained on the abdominal total
-# segmentator data model from the MONAIAuto3DSeg Slicer extension repository
+# pull the weights for the RMS model from a public repository which is a mirror of the
+# original uploaded location (which wasn't available via a direct URL)
 ENV WEIGHTS_DIR="/root/.cache/torch/hub/checkpoints/"
 ENV MODEL_NAME="rms_segment_fold_03.pth"
 ENV WEIGHTS_URL_PREFIX="https://data.kitware.com/api/v1/file/6675ac9a9876f89773631822/download"
