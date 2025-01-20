@@ -8,11 +8,12 @@ MHub - run the NCI RMS MYOD1 mutation risk pipeline
 ---------------------------------------------------
 Author: Curtis Lisle
 Email:  clisle@knowledgevis.com
-MHub integration based on examples from Leo Nuhrenburg
+MHub integration based on MHub examples from Leo Nuhrenburg
 Model developed and trained by Dr. Hyun Jung, Frederick National Lab
 
-This version of the module outputs a binary DICOM segmentation image. The output
-contains four channels (ARMS, ERMS, STROMA, NECROSIS).
+This version of the module inputs an H&E stained whole slide image 
+and a segmentation mask.  The output is a JSON record includinng a number 
+indicating the likelihood of a MYOD1 mutation in the tissue. 
 ---------------------------------------------------
 """
 
@@ -35,9 +36,9 @@ from torch.autograd import Function
 from torchvision import datasets, models, transforms
 import torchnet.meter.confusionmeter as cm
 
-from sklearn.preprocessing import label_binarize
-from sklearn.metrics import roc_auc_score, roc_curve
-from sklearn.metrics import auc as calc_auc
+#from sklearn.preprocessing import label_binarize
+#from sklearn.metrics import roc_auc_score, roc_curve
+#from sklearn.metrics import auc as calc_auc
 
 import openslide as op
 import argparse
@@ -45,15 +46,12 @@ import numpy as np
 import torchvision
 import cv2
 import time
-from skimage.io import imread
-from tifffile import imsave
-import matplotlib.pyplot as plt
+from skimage.io import imread, imsave
 import time
 import random
 import os, glob
 import copy
 import pandas as pd
-import albumentations as albu
 from albumentations import Resize
 import gc
 import timm
@@ -71,23 +69,14 @@ num_classes = len(class_names)
 
 USE_GPU = False
 
-## MYOD1 heatmap will be saved in the inference_path folder
-#inference_output = './For_Curtis/Inferenced/'
-
-## MYOD1 WSIs tiff to inference location
-#inference_input_tiff = './For_Curtis/20x/'
-
-## MYOD1 WSIs svs to inference location
-#inference_input_svs = './For_Curtis/svs/'
-
 
 class Patho_RMS_MYOD1_Mutation_Runner(ModelRunner):
 
-    # Question:  I don't understand how the channels are specified in the 'roi' argument
+
     @IO.Instance()
     @IO.Input('image', 'dicom:mod=sm',  the='input whole slide image')
     @IO.Input('segmentation', 'png:mod=seg',  the='segmentation labelmap image')
-    @IO.Output('risk_score', 'pathology_rms_myod1_mutation_risk.json', 'json:model=patho_rms_myod1', bundle='model', the='predicted tissue classes')
+    @IO.Output('risk_score', 'pathology_rms_myod1_mutation_risk.json', 'json:model=patho_rms_myod1', bundle='model', the='predicted MYOD1 mutation risk')
     def task(self, instance: Instance, image: InstanceData, segmentation: InstanceData) -> None:
         global USE_GPU
         self.log.debug("Running the segmentation.")
@@ -144,11 +133,11 @@ class Patho_RMS_MYOD1_Mutation_Runner(ModelRunner):
         # new output of classification statistics in a string
         statistics = generateStatsString(predict_values)
         # generate unique names for multiple runs.  Add extension so it is easier to use
-        statoutname = NamedTemporaryFile(delete=False).name+'.json'
+        statoutname = '/tmp/myod.json'
         open(statoutname,"w").write(statistics)
-
-        # return the name of the output file
-        return statoutname
+        statjson = json.loads(statistics)
+        # return the JSON record containing the statisticcs
+        return statjson
 
  
 
@@ -327,20 +316,16 @@ def test_auc_svs(model, inference_input, segment_input, foldCount, totalFolds,ar
         label_path = segment_input
 
         ## Read WSI
-        wholeslide = op.OpenSlide(file_path)
+        wholeslide = imread(file_path)        
 
         ## Level 0 optical magnification
         ## If it is 40.0, extract larger patches (IMAGE_SIZE*2) and downsize
         ## If it is 20.0, extract IMAGE_SIZE patch
 
-        objective = float(wholeslide.properties[op.PROPERTY_NAME_OBJECTIVE_POWER])
-        print(imgFile_id + ' Objective is: ', objective)
-        assert objective >= 20.0, "Level 0 Objective should be greater than 20x"
-
         ## Extract WSI height and width
         sizes = wholeslide.level_dimensions[0]
-        image_height = sizes[1]
-        image_width = sizes[0]
+        image_height = shape[0]
+        image_width = shape[1]
 
         ## Resize WSI's segmentation mask to WSI's size
         label_org = imread(label_path)

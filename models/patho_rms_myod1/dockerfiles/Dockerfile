@@ -5,8 +5,8 @@ FROM mhubbase
 # pull the weights for the RMS model from a public repository which is a mirror of the
 # original uploaded location (which wasn't available via a direct URL)
 ENV WEIGHTS_DIR="/root/.cache/torch/hub/checkpoints/"
-ENV MODEL_NAME="rms_segment_fold_03.pth"
-ENV WEIGHTS_URL_PREFIX="https://data.kitware.com/api/v1/file/6675ac9a9876f89773631822/download"
+ENV MODEL_NAME="myod1_fold_01.pth"
+ENV WEIGHTS_URL_PREFIX="https://data.kitware.com/api/v1/file/678684417456515045e2ee60/download"
 ENV WEIGHTS_URL=${WEIGHTS_URL_PREFIX}
 RUN echo "weights:" ${WEIGHTS_URL}
 # download the weights
@@ -18,28 +18,25 @@ ENV PREWEIGHTS_DIR="/root/.cache/torch/checkpoints/"
 RUN wget --directory-prefix ${PREWEIGHTS_DIR} https://github.com/lukemelas/EfficientNet-PyTorch/releases/download/1.0/efficientnet-b4-6ed6700e.pth  
 
 
-# load prerequisites 
+# load prerequisites.  There are different versions here compared with the original RMS segmentation model.
 RUN echo "loading prerequisite libraries"
-RUN pip3 install  torch==1.4.0
-RUN pip3 install torchvision==0.5.0 
-RUN pip3 install efficientnet-pytorch==0.6.3
-RUN pip3 install pretrainedmodels==0.7.4
+RUN pip3 install  torch==1.7.1
 RUN pip3 install albumentations
-RUN pip3 install segmentation_models_pytorch==0.1.0 --no-dependencies
-RUN pip3 install timm==0.1.18 --no-dependencies
+RUN pip3 install segmentation_models_pytorch==0.1.3 --no-dependencies 
+RUN pip3 install pretrainedmodels 
+RUN pip3 install torchvision==0.8.2 --no-dependencies 
+RUN pip3 install efficientnet-pytorch==0.6.3
+RUN pip3 install timm==0.3.2
+RUN pip install torchnet
+RUN pip3 install openslide-python
 
-RUN echo 'installing large image'
-RUN pip3 install large-image[dicom] --find-links https://girder.github.io/large_image_wheels
-
-
-
-RUN pip3 install dicomslide
-RUN pip3 install highdicom
+#RUN pip3 install dicomslide
+#RUN pip3 install highdicom
 
 # Import the MHub model definiton
 # *** hardcoding for now
-ARG MHUB_MODELS_REPO="https://github.com/curtislisle/mhub_models::rms"
-RUN buildutils/import_mhub_model.sh patho_rms ${MHUB_MODELS_REPO}
+ARG MHUB_MODELS_REPO="https://github.com/curtislisle/mhub_models::rms_myod1"
+RUN buildutils/import_mhub_model.sh patho_rms_myod1 ${MHUB_MODELS_REPO}
 
 
 # the weights come bundled in a tar file, so untar

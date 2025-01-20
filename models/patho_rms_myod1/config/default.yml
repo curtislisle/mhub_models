@@ -1,37 +1,38 @@
 general:
   data_base_dir: /app/data
   version: 1.0
-  description: "Fractional segmentation configuration for Rhabdomyosarcoma pathology segmentation (dicom in, dicom out)"
+  description: "Rhabdomyosarcoma MYOD1 mutation (dicom in and labelmap in, json out)"
 
 execute:
-- DicomImporter
+- FileStructureImporter
 - WsiMagnificationExtractor
-- Patho_RMS_Runner_Fractional
+- Patho_RMS_MYOD1_Mutation_Runner
 - DataOrganizer
 
 modules:
-  DicomImporter:
-    source_dir: input_data
-    import_dir: sorted_data
-    sort_data: True
-    meta: 
-      mod: 'sm'
+  FileStructureImporter:
+    input_dir: input_data
+    structures:
+      - $sid@instance/$type@dicom:mod=sm
+      - $sid@instance/$type@png:mod=seg
+    import_id: sid
+
 
 # look through the pyramidal DICOM-WSI image and select the best magnification 
 # level to use for the model (10x with +/- 2.0x tolerance)
-  WsiMagnificationExtractor:
-    target_magnification: 10
-    magnification_tolerance: 2.0
-    meta: 
-      mod: 'sm'
+#  WsiMagnificationExtractor:
+#    target_magnification: 10
+#    magnification_tolerance: 2.0
+#    meta: 
+#      mod: 'sm'
       
 
   # run the fractional model
-  Patho_RMS_Runner_Fractional:
+  Patho_RMS_MYOD1_Mutation_Runner:
     meta: 
       mod: 'sm'
 
   
   DataOrganizer:
     targets:
-    - dicomseg:mod=seg-->[i:sid]/pathology_rms_fractional.seg.dcm
+    - json-->[i:sid]/myod1_mutation.json
